@@ -1,5 +1,21 @@
-import { useContacts, useTransaksi, useCustoms, useAddContact, useUpdateContact, useDeleteContact, useAddTransaksi, useUpdateTransaksi, useDeleteTransaksi, useAddSumber, useDeleteSumber, useAddKategori, useDeleteKategori } from './useSupabase'
-import type { Contact, Transaksi, NewTransaksiPayload, EditTransaksiPayload } from '../types'
+import {
+    useContacts,
+    useTransaksi,
+    useCustoms,
+    useAddContact,
+    useUpdateContact,
+    useDeleteContact,
+    useAddTransaksi,
+    useUpdateTransaksi,
+    useDeleteTransaksi,
+    useAddSumber,
+    useDeleteSumber,
+    useAddKategori,
+    useDeleteKategori,
+    useAddCicilan,
+    useDeleteCicilan,
+} from './useSupabase'
+import type { Contact, Transaksi, NewTransaksiPayload, EditTransaksiPayload, NewCicilanPayload } from '../types'
 
 export function useSupabaseStore() {
     const { data: contacts = [] } = useContacts()
@@ -13,6 +29,9 @@ export function useSupabaseStore() {
     const addTransaksiMutation = useAddTransaksi()
     const updateTransaksiMutation = useUpdateTransaksi()
     const deleteTransaksiMutation = useDeleteTransaksi()
+
+    const addCicilanMutation = useAddCicilan()
+    const deleteCicilanMutation = useDeleteCicilan()
 
     const addSumberMutation = useAddSumber()
     const deleteSumberMutation = useDeleteSumber()
@@ -59,24 +78,33 @@ export function useSupabaseStore() {
         deleteTransaksiMutation.mutate(id)
     }
 
+    const addCicilan = async (payload: NewCicilanPayload) => {
+        return await addCicilanMutation.mutateAsync(payload)
+    }
+    const deleteCicilan = (id: string, transaksiId: string) => {
+        deleteCicilanMutation.mutate({ id, transaksiId })
+    }
+
     const addSumber = (nama: string) => addSumberMutation.mutate(nama)
     const deleteSumber = (nama: string) => deleteSumberMutation.mutate(nama)
     const addKategori = (nama: string) => addKategoriMutation.mutate(nama)
     const deleteKategori = (nama: string) => deleteKategoriMutation.mutate(nama)
 
+    // Accurate calculation taking partial installment payments into account
     const totalPiutangBelumLunas = transaksi
-        .filter((t) => t.jenis === 'piutang' && t.status === 'belum_lunas')
-        .reduce((sum, t) => sum + t.nominal, 0)
+        .filter((t) => t.jenis === 'piutang' && t.status !== 'lunas')
+        .reduce((sum, t) => sum + (t.sisaNominal ?? t.nominal), 0)
 
     const totalHutangBelumLunas = transaksi
-        .filter((t) => t.jenis === 'hutang' && t.status === 'belum_lunas')
-        .reduce((sum, t) => sum + t.nominal, 0)
+        .filter((t) => t.jenis === 'hutang' && t.status !== 'lunas')
+        .reduce((sum, t) => sum + (t.sisaNominal ?? t.nominal), 0)
 
     const saldoPerSumber = (() => {
         const map: Record<string, number> = {}
-        for (const t of transaksi.filter((x) => x.status === 'belum_lunas')) {
+        for (const t of transaksi.filter((x) => x.status !== 'lunas')) {
             if (!map[t.sumberDana]) map[t.sumberDana] = 0
-            map[t.sumberDana] += t.jenis === 'hutang' ? t.nominal : -t.nominal
+            const amount = t.sisaNominal ?? t.nominal
+            map[t.sumberDana] += t.jenis === 'hutang' ? amount : -amount
         }
         return map
     })()
@@ -94,6 +122,8 @@ export function useSupabaseStore() {
         addTransaksi,
         updateTransaksi,
         deleteTransaksi,
+        addCicilan,
+        deleteCicilan,
         addSumber,
         deleteSumber,
         addKategori,
@@ -103,3 +133,4 @@ export function useSupabaseStore() {
         saldoPerSumber,
     }
 }
+

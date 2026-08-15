@@ -32,6 +32,9 @@
         "noImplicitOverride": false,
         "allowUnreachableCode": true,
         "allowUnusedLabels": true,
+        "types": [
+            "vite/client"
+        ],
         "baseUrl": ".",
         "paths": {
             "@/*": [

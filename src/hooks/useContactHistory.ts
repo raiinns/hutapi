@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import type { Transaksi, StatusPelunasan } from '../types'
+import type { Transaksi, StatusPelunasan, PembayaranCicilan } from '../types'
 
 export type SortField = 'waktu' | 'nominal'
 export type SortOrder = 'asc' | 'desc'
@@ -45,73 +45,109 @@ export function useContactHistory({
                 }
             }
 
-            // Build query with RLS - user can only see their own data
-            let query = supabase
-                .from('transaksi')
-                .select('*')
-                .eq('contact_id', contactId)
+            // Fetch transactions and their payments
+            const [txRes, cicilanRes] = await Promise.all([
+                supabase
+                    .from('transaksi')
+                    .select('*')
+                    .eq('contact_id', contactId)
+                    .order(sortBy, { ascending: sortOrder === 'asc' }),
+                supabase
+                    .from('pembayaran_cicilan')
+                    .select('*')
+                    .order('waktu', { ascending: true }),
+            ])
 
-            // Apply status filter
-            if (filterStatus !== 'semua') {
-                query = query.eq('status', filterStatus)
-            }
+            if (txRes.error) throw txRes.error
 
-            // Apply sorting
-            query = query.order(sortBy, { ascending: sortOrder === 'asc' })
+            const allCicilan = cicilanRes.data || []
 
-            const { data, error } = await query
+            let rawTransaksi = (txRes.data || []).map((d) => {
+                const txCicilan = allCicilan
+                    .filter((c: any) => c.transaksi_id === d.id)
+                    .map((c: any) => ({
+                        id: c.id,
+                        transaksiId: c.transaksi_id,
+                        waktu: c.waktu,
+                        nominal: Number(c.nominal),
+                        sumberDana: c.sumber_dana,
+                        catatan: c.catatan,
+                        createdAt: c.created_at,
+                    })) as PembayaranCicilan[]
 
-            if (error) throw error
+                const totalDibayar = txCicilan.reduce((sum, c) => sum + c.nominal, 0)
+                const nominal = Number(d.nominal)
+                const sisaNominal = Math.max(0, nominal - totalDibayar)
 
-            const transaksi = (data || []).map((d) => ({
-                id: d.id,
-                waktu: d.waktu,
-                contactId: d.contact_id,
-                namaContact: d.nama_contact,
-                jenis: d.jenis,
-                kategori: d.kategori,
-                sumberDana: d.sumber_dana,
-                nominal: Number(d.nominal),
-                catatan: d.catatan,
-                status: d.status,
-                waktuLunas: d.waktu_lunas,
-            })) as Transaksi[]
+                let status = d.status
+                if (status !== 'lunas') {
+                    if (totalDibayar >= nominal && nominal > 0) {
+                        status = 'lunas'
+                    } else if (totalDibayar > 0) {
+                        status = 'dicicil'
+                    }
+                }
 
-            // Calculate totals
+                return {
+                    id: d.id,
+                    waktu: d.waktu,
+                    contactId: d.contact_id,
+                    namaContact: d.nama_contact,
+                    jenis: d.jenis,
+                    kategori: d.kategori,
+                    sumberDana: d.sumber_dana,
+                    nominal,
+                    catatan: d.catatan,
+                    status,
+                    waktuLunas: d.waktu_lunas,
+                    totalDibayar,
+                    sisaNominal,
+                    cicilanList: txCicilan,
+                }
+            }) as Transaksi[]
+
+            // Calculate totals across all transactions
             let totalHutangBelumLunas = 0
             let totalPiutangBelumLunas = 0
             let totalHutangLunas = 0
             let totalPiutangLunas = 0
 
-            for (const t of transaksi) {
+            for (const t of rawTransaksi) {
+                const unpaid = t.status === 'lunas' ? 0 : (t.sisaNominal ?? t.nominal)
                 if (t.jenis === 'hutang') {
-                    if (t.status === 'belum_lunas') {
-                        totalHutangBelumLunas += t.nominal
-                    } else {
+                    if (t.status === 'lunas') {
                         totalHutangLunas += t.nominal
+                    } else {
+                        totalHutangBelumLunas += unpaid
                     }
                 } else {
-                    if (t.status === 'belum_lunas') {
-                        totalPiutangBelumLunas += t.nominal
-                    } else {
+                    if (t.status === 'lunas') {
                         totalPiutangLunas += t.nominal
+                    } else {
+                        totalPiutangBelumLunas += unpaid
                     }
                 }
             }
 
+            // Apply filter status
+            const filteredTransaksi = filterStatus === 'semua'
+                ? rawTransaksi
+                : rawTransaksi.filter((t) => t.status === filterStatus)
+
             return {
-                transaksi,
+                transaksi: filteredTransaksi,
                 totalBelumLunas: totalHutangBelumLunas + totalPiutangBelumLunas,
                 totalLunas: totalHutangLunas + totalPiutangLunas,
                 totalHutangBelumLunas,
                 totalPiutangBelumLunas,
                 totalHutangLunas,
                 totalPiutangLunas,
-                count: transaksi.length,
+                count: filteredTransaksi.length,
             }
         },
         enabled: !!contactId,
-        staleTime: 30 * 1000, // 30 seconds
-        gcTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 30 * 1000,
+        gcTime: 5 * 60 * 1000,
     })
 }
+

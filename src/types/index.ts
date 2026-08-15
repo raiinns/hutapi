@@ -1,6 +1,6 @@
 export type JenisTransaksi = 'hutang' | 'piutang'
 
-export type StatusPelunasan = 'belum_lunas' | 'lunas'
+export type StatusPelunasan = 'belum_lunas' | 'dicicil' | 'lunas'
 
 // Bisa string bebas (custom)
 export type SumberDana = string
@@ -31,6 +31,24 @@ export interface Contact {
     createdAt: string
 }
 
+export interface PembayaranCicilan {
+    id: string
+    transaksiId: string
+    waktu: string
+    nominal: number
+    sumberDana: SumberDana
+    catatan?: string
+    createdAt: string
+}
+
+export interface NewCicilanPayload {
+    transaksiId: string
+    nominal: number
+    sumberDana: SumberDana
+    catatan?: string
+    waktu?: string
+}
+
 export interface Transaksi {
     id: string
     waktu: string // ISO string UTC — format ke WIB di UI
@@ -43,6 +61,9 @@ export interface Transaksi {
     catatan?: string
     status: StatusPelunasan
     waktuLunas?: string
+    totalDibayar?: number
+    sisaNominal?: number
+    cicilanList?: PembayaranCicilan[]
 }
 
 export interface NewTransaksiPayload {
@@ -53,6 +74,7 @@ export interface NewTransaksiPayload {
     sumberDana: SumberDana
     nominal: number
     catatan?: string
+    waktu?: string
 }
 
 export interface EditTransaksiPayload {
@@ -64,4 +86,6 @@ export interface EditTransaksiPayload {
     nominal?: number
     catatan?: string
     status?: StatusPelunasan
+    waktu?: string
 }
+

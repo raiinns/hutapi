@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { Plus, ChevronDown, Settings2, X, Check, Tag, Wallet } from 'lucide-react'
+import { Plus, ChevronDown, Settings2, X, Tag, Wallet, Calendar, Clock } from 'lucide-react'
+import toast from 'react-hot-toast'
 import type { Contact, NewTransaksiPayload } from '../types'
-import { appendThousand } from '../utils/format'
+import { appendThousand, toDatetimeLocal, fromDatetimeLocal } from '../utils/format'
 
 interface Props {
     contacts: Contact[]
@@ -33,6 +34,7 @@ export default function TransaksiForm({
     const [kategori, setKategori] = useState(allKategori[0] ?? 'Uang Tunai')
     const [sumberDana, setSumberDana] = useState(allSumber[0] ?? 'Cash')
     const [nominal, setNominal] = useState('')
+    const [waktu, setWaktu] = useState(toDatetimeLocal())
     const [catatan, setCatatan] = useState('')
     const [showManageKategori, setShowManageKategori] = useState(false)
     const [showManageSumber, setShowManageSumber] = useState(false)
@@ -54,7 +56,10 @@ export default function TransaksiForm({
 
     async function handleSubmit(e: FormEvent) {
         e.preventDefault()
-        if (!nominal || Number(nominal) <= 0) return
+        if (!nominal || Number(nominal) <= 0) {
+            toast.error('Masukkan nominal transaksi yang valid')
+            return
+        }
 
         let finalContactId = contactId
         let finalNama = contacts.find((contact) => contact.id === contactId)?.nama ?? ''
@@ -64,17 +69,18 @@ export default function TransaksiForm({
                 const created = await onAddContact(namaManual.trim())
                 finalContactId = created.id
                 finalNama = created.nama
+                toast.success(`Kontak "${created.nama}" berhasil dibuat`)
             } catch {
-                alert('Gagal membuat kontak baru. Silakan coba lagi.')
+                toast.error('Gagal membuat kontak baru. Silakan coba lagi.')
                 return
             }
         } else if (!contactId) {
-            alert('Pilih nama kontak terlebih dahulu')
+            toast.error('Pilih nama kontak terlebih dahulu')
             return
         }
 
         if (!finalContactId) {
-            alert('Terjadi kesalahan saat membuat kontak. ID tidak valid.')
+            toast.error('Terjadi kesalahan saat memproses kontak.')
             return
         }
 
@@ -85,13 +91,17 @@ export default function TransaksiForm({
             kategori,
             sumberDana,
             nominal: Number(nominal),
+            waktu: fromDatetimeLocal(waktu),
             catatan: catatan.trim() || undefined,
         })
+
+        toast.success(`Transaksi ${jenis === 'piutang' ? 'piutang' : 'hutang'} berhasil dicatat!`)
 
         setNominal('')
         setCatatan('')
         setNamaManual('')
         setShowNewContact(false)
+        setWaktu(toDatetimeLocal())
     }
 
     return (
@@ -105,8 +115,8 @@ export default function TransaksiForm({
                             onClick={() => setJenis('piutang')}
                             aria-pressed={jenis === 'piutang'}
                             className={`min-h-11 rounded-lg px-3 py-2 text-xs sm:text-sm font-bold transition-all ${jenis === 'piutang'
-                                    ? 'bg-emerald-600 text-white shadow-sm dark:bg-emerald-500'
-                                    : 'text-muted-foreground hover:bg-card hover:text-foreground'
+                                ? 'bg-emerald-600 text-white shadow-sm dark:bg-emerald-500'
+                                : 'text-muted-foreground hover:bg-card hover:text-foreground'
                                 }`}
                         >
                             Piutang
@@ -116,8 +126,8 @@ export default function TransaksiForm({
                             onClick={() => setJenis('hutang')}
                             aria-pressed={jenis === 'hutang'}
                             className={`min-h-11 rounded-lg px-3 py-2 text-xs sm:text-sm font-bold transition-all ${jenis === 'hutang'
-                                    ? 'bg-rose-600 text-white shadow-sm dark:bg-rose-500'
-                                    : 'text-muted-foreground hover:bg-card hover:text-foreground'
+                                ? 'bg-rose-600 text-white shadow-sm dark:bg-rose-500'
+                                : 'text-muted-foreground hover:bg-card hover:text-foreground'
                                 }`}
                         >
                             Hutang
@@ -209,6 +219,28 @@ export default function TransaksiForm({
                     </div>
                 </div>
 
+                <div className="space-y-2">
+                    <label htmlFor="transaction-datetime" className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                        <Calendar size={14} className="text-primary" />
+                        Tanggal & Waktu Transaksi
+                    </label>
+                    <div className="relative">
+                        <input
+                            id="transaction-datetime"
+                            type="datetime-local"
+                            value={waktu}
+                            onChange={(e) => setWaktu(e.target.value)}
+                            onClick={(e) => e.currentTarget.showPicker?.()}
+                            className="min-h-11 w-full cursor-pointer rounded-xl border border-input bg-card px-3.5 py-2.5 text-sm font-semibold text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-2xs"
+                            required
+                        />
+                    </div>
+                    <p className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+                        <Clock size={12} className="text-primary" />
+                        Pilih tanggal dari kalender & waktu dari pemilih jam di atas.
+                    </p>
+                </div>
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-2 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 dark:bg-indigo-500/10">
                         <div className="flex min-h-8 items-center justify-between gap-2">
@@ -271,7 +303,7 @@ export default function TransaksiForm({
                     </label>
                     <textarea
                         id="transaction-note"
-                        placeholder="Tambahkan keteletan detail transaksi (misal: Beli pulsa, pinjam uang)"
+                        placeholder="Tambahkan detail transaksi..."
                         value={catatan}
                         onChange={(e) => setCatatan(e.target.value)}
                         rows={3}
@@ -296,10 +328,20 @@ export default function TransaksiForm({
                     inputValue={newKategoriInput}
                     onInputChange={setNewKategoriInput}
                     onAdd={() => {
-                        onAddKategori(newKategoriInput)
+                        const trimmed = newKategoriInput.trim()
+                        if (!trimmed) return
+                        if (allKategori.includes(trimmed)) {
+                            toast.error('Kategori sudah ada')
+                            return
+                        }
+                        onAddKategori(trimmed)
+                        toast.success(`Kategori "${trimmed}" ditambahkan`)
                         setNewKategoriInput('')
                     }}
-                    onDelete={onDeleteKategori}
+                    onDelete={(item) => {
+                        onDeleteKategori(item)
+                        toast.success(`Kategori "${item}" dihapus`)
+                    }}
                     onClose={() => setShowManageKategori(false)}
                 />
             )}
@@ -312,10 +354,20 @@ export default function TransaksiForm({
                     inputValue={newSumberInput}
                     onInputChange={setNewSumberInput}
                     onAdd={() => {
-                        onAddSumber(newSumberInput)
+                        const trimmed = newSumberInput.trim()
+                        if (!trimmed) return
+                        if (allSumber.includes(trimmed)) {
+                            toast.error('Sumber dana sudah ada')
+                            return
+                        }
+                        onAddSumber(trimmed)
+                        toast.success(`Sumber dana "${trimmed}" ditambahkan`)
                         setNewSumberInput('')
                     }}
-                    onDelete={onDeleteSumber}
+                    onDelete={(item) => {
+                        onDeleteSumber(item)
+                        toast.success(`Sumber dana "${item}" dihapus`)
+                    }}
                     onClose={() => setShowManageSumber(false)}
                 />
             )}
@@ -364,6 +416,12 @@ function ManageListModal({
                         placeholder="Tambah item baru..."
                         value={inputValue}
                         onChange={(e) => onInputChange(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault()
+                                onAdd()
+                            }
+                        }}
                         className="min-h-10 flex-1 rounded-xl border border-input bg-card px-3.5 py-2 text-sm font-medium text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
                     <button

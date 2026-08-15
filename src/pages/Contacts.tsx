@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Pencil, Trash2, X, UserCircle2, Phone, UserPlus, FileText, Plus } from 'lucide-react'
+import toast from 'react-hot-toast'
 import type { Contact } from '../types'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 interface Props {
     contacts: Contact[]
@@ -22,11 +24,16 @@ export default function Contacts({ contacts, onAdd, onUpdate, onDelete }: Props)
     const [newHp, setNewHp] = useState('')
     const [newCatatan, setNewCatatan] = useState('')
     const [editState, setEditState] = useState<EditState | null>(null)
+    const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null)
 
     function handleAdd(e: React.FormEvent) {
         e.preventDefault()
-        if (!newNama.trim()) return
+        if (!newNama.trim()) {
+            toast.error('Nama kontak tidak boleh kosong')
+            return
+        }
         onAdd(newNama.trim(), newHp.trim() || undefined, newCatatan.trim() || undefined)
+        toast.success(`Kontak "${newNama.trim()}" berhasil ditambahkan`)
         setNewNama('')
         setNewHp('')
         setNewCatatan('')
@@ -44,18 +51,24 @@ export default function Contacts({ contacts, onAdd, onUpdate, onDelete }: Props)
 
     function handleSaveEdit() {
         if (!editState) return
+        if (!editState.nama.trim()) {
+            toast.error('Nama kontak tidak boleh kosong')
+            return
+        }
         onUpdate(editState.id, {
             nama: editState.nama.trim(),
             nomorHp: editState.nomorHp.trim() || undefined,
             catatan: editState.catatan.trim() || undefined,
         })
+        toast.success('Perubahan kontak berhasil disimpan')
         setEditState(null)
     }
 
-    function handleDelete(id: string) {
-        if (confirm('Hapus kontak ini? Data transaksi terkait tidak akan ikut terhapus.')) {
-            onDelete(id)
-        }
+    function handleConfirmDelete() {
+        if (!deleteTarget) return
+        onDelete(deleteTarget.id)
+        toast.success(`Kontak "${deleteTarget.nama}" beserta seluruh riwayat transaksi telah dihapus`)
+        setDeleteTarget(null)
     }
 
     const inputClassName =
@@ -184,15 +197,15 @@ export default function Contacts({ contacts, onAdd, onUpdate, onDelete }: Props)
                                             type="button"
                                             onClick={() => handleEdit(c)}
                                             aria-label={`Edit ${c.nama}`}
-                                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
                                         >
                                             <Pencil size={14} />
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => handleDelete(c.id)}
+                                            onClick={() => setDeleteTarget(c)}
                                             aria-label={`Hapus ${c.nama}`}
-                                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
                                         >
                                             <Trash2 size={14} />
                                         </button>
@@ -206,14 +219,14 @@ export default function Contacts({ contacts, onAdd, onUpdate, onDelete }: Props)
 
             {showForm && (
                 <div
-                    className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/20 p-3 sm:items-center sm:p-4"
+                    className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/20 p-3 sm:items-center sm:p-4 backdrop-blur-xs animate-fade-in"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="add-contact-title"
                 >
                     <form
                         onSubmit={handleAdd}
-                        className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm"
+                        className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-5 shadow-xl animate-fade-in"
                     >
                         <div className="flex items-start justify-between gap-3 border-b border-border pb-4">
                             <div className="flex items-start gap-3">
@@ -283,13 +296,13 @@ export default function Contacts({ contacts, onAdd, onUpdate, onDelete }: Props)
                             <button
                                 type="button"
                                 onClick={() => setShowForm(false)}
-                                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted cursor-pointer"
                             >
                                 Batal
                             </button>
                             <button
                                 type="submit"
-                                className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                                className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
                             >
                                 Simpan kontak
                             </button>
@@ -297,6 +310,22 @@ export default function Contacts({ contacts, onAdd, onUpdate, onDelete }: Props)
                     </form>
                 </div>
             )}
+
+            <ConfirmDialog
+                isOpen={!!deleteTarget}
+                title="Hapus Kontak?"
+                description={
+                    <span>
+                        Menghapus kontak <strong className="text-foreground font-bold">"{deleteTarget?.nama}"</strong> akan menghapus <strong>seluruh catatan riwayat transaksi hutang dan piutang</strong> dari kontak ini.
+                    </span>
+                }
+                confirmText="Ya, Hapus Semua"
+                cancelText="Batal"
+                variant="danger"
+                onConfirm={handleConfirmDelete}
+                onCancel={() => setDeleteTarget(null)}
+            />
         </div>
     )
 }
+

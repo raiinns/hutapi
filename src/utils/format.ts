@@ -86,3 +86,22 @@ export function appendThousand(current: string): string {
     if (isNaN(num)) return current
     return String(num * 1000)
 }
+
+/** Konversi ISO string atau Date ke format input datetime-local (YYYY-MM-DDTHH:mm) dalam waktu lokal */
+export function toDatetimeLocal(isoOrDate?: string | Date | null): string {
+    const d = isoOrDate ? new Date(isoOrDate) : new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const hours = String(d.getHours()).padStart(2, '0')
+    const minutes = String(d.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+/** Konversi value dari datetime-local ke ISO UTC string */
+export function fromDatetimeLocal(localStr: string): string {
+    if (!localStr) return new Date().toISOString()
+    const d = new Date(localStr)
+    return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
+}
+

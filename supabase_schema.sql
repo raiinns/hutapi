@@ -41,13 +41,25 @@ CREATE TABLE IF NOT EXISTS public.transaksi (
     sumber_dana TEXT NOT NULL,
     nominal NUMERIC(15, 2) NOT NULL CHECK (nominal >= 0),
     catatan TEXT,
-    status TEXT NOT NULL DEFAULT 'belum_lunas' CHECK (status IN ('belum_lunas', 'lunas')),
+    status TEXT NOT NULL DEFAULT 'belum_lunas' CHECK (status IN ('belum_lunas', 'dicicil', 'lunas')),
     waktu_lunas TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- Tabel 2.3: Custom Sumber Dana
+-- Tabel 2.3: Pembayaran Cicilan (Log Cicilan / Pembayaran Bertahap)
+CREATE TABLE IF NOT EXISTS public.pembayaran_cicilan (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    transaksi_id UUID NOT NULL REFERENCES public.transaksi(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    waktu TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    nominal NUMERIC(15, 2) NOT NULL CHECK (nominal > 0),
+    sumber_dana TEXT NOT NULL,
+    catatan TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Tabel 2.4: Custom Sumber Dana
 CREATE TABLE IF NOT EXISTS public.custom_sumber_dana (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -56,7 +68,7 @@ CREATE TABLE IF NOT EXISTS public.custom_sumber_dana (
     CONSTRAINT unique_user_sumber_dana UNIQUE (user_id, nama)
 );
 
--- Tabel 2.4: Custom Kategori
+-- Tabel 2.5: Custom Kategori
 CREATE TABLE IF NOT EXISTS public.custom_kategori (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -77,6 +89,10 @@ CREATE INDEX IF NOT EXISTS idx_transaksi_status ON public.transaksi(status);
 CREATE INDEX IF NOT EXISTS idx_transaksi_jenis ON public.transaksi(jenis);
 CREATE INDEX IF NOT EXISTS idx_transaksi_waktu ON public.transaksi(waktu DESC);
 
+CREATE INDEX IF NOT EXISTS idx_pembayaran_cicilan_transaksi_id ON public.pembayaran_cicilan(transaksi_id);
+CREATE INDEX IF NOT EXISTS idx_pembayaran_cicilan_user_id ON public.pembayaran_cicilan(user_id);
+CREATE INDEX IF NOT EXISTS idx_pembayaran_cicilan_waktu ON public.pembayaran_cicilan(waktu DESC);
+
 CREATE INDEX IF NOT EXISTS idx_custom_sumber_user ON public.custom_sumber_dana(user_id);
 CREATE INDEX IF NOT EXISTS idx_custom_kategori_user ON public.custom_kategori(user_id);
 
@@ -86,6 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_custom_kategori_user ON public.custom_kategori(us
 -- Mengaktifkan RLS di seluruh tabel
 ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transaksi ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pembayaran_cicilan ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.custom_sumber_dana ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.custom_kategori ENABLE ROW LEVEL SECURITY;
 
@@ -100,6 +117,13 @@ CREATE POLICY "Users can perform all actions on their own contacts"
 DROP POLICY IF EXISTS "Users can perform all actions on their own transaksi" ON public.transaksi;
 CREATE POLICY "Users can perform all actions on their own transaksi" 
     ON public.transaksi FOR ALL 
+    USING (auth.uid() = user_id) 
+    WITH CHECK (auth.uid() = user_id);
+
+-- Policy Pembayaran Cicilan
+DROP POLICY IF EXISTS "Users can perform all actions on their own cicilan" ON public.pembayaran_cicilan;
+CREATE POLICY "Users can perform all actions on their own cicilan" 
+    ON public.pembayaran_cicilan FOR ALL 
     USING (auth.uid() = user_id) 
     WITH CHECK (auth.uid() = user_id);
 
@@ -166,7 +190,7 @@ BEGIN
         IF NEW.waktu_lunas IS NULL THEN
             NEW.waktu_lunas = timezone('utc'::text, now());
         END IF;
-    ELSIF NEW.status = 'belum_lunas' THEN
+    ELSIF NEW.status IN ('belum_lunas', 'dicicil') THEN
         NEW.waktu_lunas = NULL;
     END IF;
     RETURN NEW;
@@ -178,24 +202,93 @@ CREATE TRIGGER auto_waktu_lunas
     BEFORE INSERT OR UPDATE ON public.transaksi
     FOR EACH ROW EXECUTE FUNCTION public.handle_waktu_lunas();
 
+-- Trigger 5.4: Sinkronisasi Otomatis Status Transaksi saat Pembayaran Cicilan Ditambah/Dihapus
+CREATE OR REPLACE FUNCTION public.sync_transaksi_cicilan_status()
+RETURNS TRIGGER AS $$
+DECLARE
+    target_tx_id UUID;
+    tx_nominal NUMERIC;
+    total_paid NUMERIC;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        target_tx_id := OLD.transaksi_id;
+    ELSE
+        target_tx_id := NEW.transaksi_id;
+    END IF;
+
+    -- Ambil nominal pokok transaksi
+    SELECT nominal INTO tx_nominal FROM public.transaksi WHERE id = target_tx_id;
+    IF tx_nominal IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    -- Hitung akumulasi cicilan yang sudah masuk
+    SELECT COALESCE(SUM(nominal), 0) INTO total_paid 
+    FROM public.pembayaran_cicilan 
+    WHERE transaksi_id = target_tx_id;
+
+    -- Tentukan status otomatis
+    IF total_paid >= tx_nominal AND tx_nominal > 0 THEN
+        UPDATE public.transaksi 
+        SET status = 'lunas',
+            waktu_lunas = COALESCE(waktu_lunas, timezone('utc'::text, now()))
+        WHERE id = target_tx_id;
+    ELSIF total_paid > 0 THEN
+        UPDATE public.transaksi 
+        SET status = 'dicicil',
+            waktu_lunas = NULL
+        WHERE id = target_tx_id;
+    ELSE
+        UPDATE public.transaksi 
+        SET status = 'belum_lunas',
+            waktu_lunas = NULL
+        WHERE id = target_tx_id;
+    END IF;
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_transaksi_cicilan_status ON public.pembayaran_cicilan;
+CREATE TRIGGER trg_sync_transaksi_cicilan_status
+    AFTER INSERT OR UPDATE OR DELETE ON public.pembayaran_cicilan
+    FOR EACH ROW EXECUTE FUNCTION public.sync_transaksi_cicilan_status();
+
 -- ------------------------------------------------------------------------------
 -- 6. VIEWS & HELPER RPC (OPTIONAL FOR ANALYTICS)
 -- ------------------------------------------------------------------------------
 
--- View Ringkasan Per Kontak
+-- View Ringkasan Per Kontak dengan Cicilan
 CREATE OR REPLACE VIEW public.v_summary_per_contact AS
+WITH cicilan_agg AS (
+    SELECT transaksi_id, SUM(nominal) AS total_dibayar
+    FROM public.pembayaran_cicilan
+    GROUP BY transaksi_id
+),
+tx_calc AS (
+    SELECT 
+        t.user_id,
+        t.contact_id,
+        t.jenis,
+        t.status,
+        t.nominal,
+        COALESCE(c.total_dibayar, 0) AS total_dibayar,
+        GREATEST(t.nominal - COALESCE(c.total_dibayar, 0), 0) AS sisa_nominal
+    FROM public.transaksi t
+    LEFT JOIN cicilan_agg c ON t.id = c.transaksi_id
+)
 SELECT 
-    c.user_id,
-    c.id AS contact_id,
-    c.nama,
-    c.nomor_hp,
-    COALESCE(SUM(CASE WHEN t.jenis = 'piutang' AND t.status = 'belum_lunas' THEN t.nominal ELSE 0 END), 0) AS total_piutang_aktif,
-    COALESCE(SUM(CASE WHEN t.jenis = 'hutang' AND t.status = 'belum_lunas' THEN t.nominal ELSE 0 END), 0) AS total_hutang_aktif,
-    COALESCE(SUM(CASE WHEN t.jenis = 'piutang' AND t.status = 'belum_lunas' THEN t.nominal ELSE 0 END), 0) -
-    COALESCE(SUM(CASE WHEN t.jenis = 'hutang' AND t.status = 'belum_lunas' THEN t.nominal ELSE 0 END), 0) AS net_balance
-FROM public.contacts c
-LEFT JOIN public.transaksi t ON c.id = t.contact_id
-GROUP BY c.user_id, c.id, c.nama, c.nomor_hp;
+    ct.user_id,
+    ct.id AS contact_id,
+    ct.nama,
+    ct.nomor_hp,
+    COALESCE(SUM(CASE WHEN tx.jenis = 'piutang' AND tx.status != 'lunas' THEN tx.sisa_nominal ELSE 0 END), 0) AS total_piutang_aktif,
+    COALESCE(SUM(CASE WHEN tx.jenis = 'hutang' AND tx.status != 'lunas' THEN tx.sisa_nominal ELSE 0 END), 0) AS total_hutang_aktif,
+    COALESCE(SUM(CASE WHEN tx.jenis = 'piutang' AND tx.status != 'lunas' THEN tx.sisa_nominal ELSE 0 END), 0) -
+    COALESCE(SUM(CASE WHEN tx.jenis = 'hutang' AND tx.status != 'lunas' THEN tx.sisa_nominal ELSE 0 END), 0) AS net_balance
+FROM public.contacts ct
+LEFT JOIN tx_calc tx ON ct.id = tx.contact_id
+GROUP BY ct.user_id, ct.id, ct.nama, ct.nomor_hp;
 
 -- Grant permissions pada public schema untuk authenticated user
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
@@ -205,3 +298,4 @@ GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO authenticated;
 -- ==============================================================================
 -- SCRIPT SELESAI
 -- ==============================================================================
+

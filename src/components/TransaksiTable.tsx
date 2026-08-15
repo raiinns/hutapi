@@ -62,13 +62,14 @@ export default function TransaksiTable({ transaksi, contacts, onEdit }: Props) {
             const stats = map.get(item.contactId)!
             stats.transaksiCount++
 
+            const unpaid = item.status === 'lunas' ? 0 : (item.sisaNominal ?? item.nominal)
             if (item.status === 'lunas') {
                 if (item.jenis === 'hutang') stats.totalHutangLunas += item.nominal
                 else stats.totalPiutangLunas += item.nominal
             } else if (item.jenis === 'hutang') {
-                stats.totalHutangBelumLunas += item.nominal
+                stats.totalHutangBelumLunas += unpaid
             } else {
-                stats.totalPiutangBelumLunas += item.nominal
+                stats.totalPiutangBelumLunas += unpaid
             }
         })
 
